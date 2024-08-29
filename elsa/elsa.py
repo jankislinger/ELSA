@@ -29,7 +29,8 @@ class ELSA(torch.nn.Module):
         """
         super(ELSA, self).__init__()
         W = torch.nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty([n_items, n_dims])).detach().clone())
-        self.__W_list = torch.nn.ParameterList([W])
+        b = torch.nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty([n_items])).detach().clone())
+        self.__W_list = torch.nn.ParameterList([W, b])
         self.__device = device or torch.device("cuda")
         self.__items_cnt = n_items
         self.__optimizer = torch.optim.NAdam(self.parameters(), lr=lr)
@@ -202,9 +203,13 @@ class ELSA(torch.nn.Module):
             Predicted tensor with the same shape as input tensor 'x'
         """
         A = torch.nn.functional.normalize(self.__get_weights(), dim=-1)
-        xA = torch.matmul(x, A)
-        xAAT = torch.matmul(xA, A.T)
-        return xAAT - x
+        b = self.__W_list[1]
+        AAT = torch.matmul(A, A.T)
+        AAT += b.reshape((1, -1))
+        AAT -= b.reshape((-1, 1))
+        diag_indices = torch.arange(self.__items_cnt).to(self.__device)
+        AAT[diag_indices, diag_indices] = 0.0
+        return torch.matmul(x, AAT)
 
     def get_items_embeddings(self, as_numpy: bool = False) -> typing.Union[torch.Tensor, np.ndarray]:
         """
@@ -381,7 +386,7 @@ class ELSA(torch.nn.Module):
             yield self.forward(input_batch).detach()
 
     def __get_weights(self):
-        return torch.vstack([param.to(self.__device) for param in self.__W_list])
+        return self.__W_list[0].to(self.__device)
 
     @staticmethod
     def __convert_data_to_dataloader(
